@@ -43,5 +43,17 @@ target_include_directories(dotenv PUBLIC
 
 # --- main executable ---
 add_executable(main src/main.cpp)
-target_link_libraries(main PRIVATE dotenv)
+# Link Homebrew-installed libraries
+find_path(CPR_INCLUDE_DIR cpr/cpr.h)
+find_library(CPR_LIB cpr)
+
+find_path(JSON_INCLUDE_DIR nlohmann/json.hpp)
+
+target_include_directories(main PRIVATE
+    ${CPR_INCLUDE_DIR}
+    ${JSON_INCLUDE_DIR}
+    external/cpp-dotenv/include
+)
+
+target_link_libraries(main PRIVATE dotenv ${CPR_LIB})
 target_include_directories(main PRIVATE external/cpp-dotenv/include)
