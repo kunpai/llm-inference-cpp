@@ -32,7 +32,7 @@ std::string get_service_prefix(const std::string& key) {
     return (pos != std::string::npos) ? key.substr(0, pos) : "";
 }
 
-json build_payload_for_service(const std::string& service) {
+json build_payload_for_service(const std::string& service, double temperature) {
     if (service == "openai" || service == "mistral") {
         return {
             {"model", service == "openai" ? "gpt-4" : "mistral-large-latest"},
@@ -40,7 +40,7 @@ json build_payload_for_service(const std::string& service) {
                 {{"role", "system"}, {"content", "You are a helpful assistant."}},
                 {{"role", "user"}, {"content", "What is the capital of France?"}}
             }},
-            {"temperature", 0.7}
+            {"temperature", temperature}
         };
     } else if (service == "gemini") {
         return {
@@ -53,22 +53,23 @@ json build_payload_for_service(const std::string& service) {
             }},
             {"generationConfig", {
                 {"stopSequences", {"Title"}},
-                {"temperature", 0.7},
+                {"temperature", temperature},
                 {"maxOutputTokens", 1024},
                 {"topP", 0.8},
                 {"topK", 10}
             }}
-        };     
+        };
     } else if (service == "claude") {
         return {
             {"model", "claude-3-7-sonnet-20250219"},
             {"max_tokens", 1024},
             {"messages", {
                 {{"role", "user"}, {"content", "What is the capital of France?"}}
-            }}
+            }},
+            {"temperature", temperature}
         };
     }
-    return json(); // Empty fallback
+    return json();
 }
 
 cpr::Header build_headers_for_service(const std::string& service, const std::string& api_key) {
@@ -93,7 +94,18 @@ cpr::Header build_headers_for_service(const std::string& service, const std::str
 
 // ----------- Main ------------
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <service> [temperature]\n";
+        return 1;
+    }
+
+    std::string target_service = argv[1];
+    double temperature = 0.7;
+    if (argc >= 3) {
+        temperature = std::stod(argv[2]);
+    }
+
     auto env_vars = parse_env_file("../.env");
     auto link_vars = parse_env_file("../.links");
 
@@ -114,39 +126,39 @@ int main() {
         }
     }
 
-    for (const auto& [service, url] : service_urls) {
-        if (service_api_keys.find(service) == service_api_keys.end()) {
-            std::cerr << "⚠️ Skipping " << service << ": Missing API key\n";
-            continue;
-        }
+    if (service_urls.find(target_service) == service_urls.end()) {
+        std::cerr << "❌ No URL found for service: " << target_service << "\n";
+        return 1;
+    }
 
-        json payload = build_payload_for_service(service);
-        cpr::Header headers = build_headers_for_service(service, service_api_keys[service]);
+    if (service_api_keys.find(target_service) == service_api_keys.end()) {
+        std::cerr << "❌ No API key found for service: " << target_service << "\n";
+        return 1;
+    }
 
-        if (payload.empty() || headers.empty()) {
-            std::cerr << "⚠️ Skipping " << service << ": Unsupported payload or headers\n";
-            continue;
-        }
+    json payload = build_payload_for_service(target_service, temperature);
+    cpr::Header headers = build_headers_for_service(target_service, service_api_keys[target_service]);
 
-        std::cout << "🔄 Sending request to [" << service << "] at " << url << "\n";
+    if (payload.empty() || headers.empty()) {
+        std::cerr << "⚠️ Unsupported service or empty payload: " << target_service << "\n";
+        return 1;
+    }
 
-        // Special case: Gemini puts API key in the URL
-        std::string full_url = (service == "gemini")
-            ? url + "?key=" + service_api_keys[service]
-            : url;
+    std::string url = service_urls[target_service];
+    std::string full_url = (target_service == "gemini") ? url + "?key=" + service_api_keys[target_service] : url;
 
-        cpr::Response r = cpr::Post(
-            cpr::Url{full_url},
-            headers,
-            cpr::Body{payload.dump()}
-        );
+    std::cout << "🔄 Sending request to [" << target_service << "] at " << full_url << "\n";
+    cpr::Response r = cpr::Post(
+        cpr::Url{full_url},
+        headers,
+        cpr::Body{payload.dump()}
+    );
 
-        if (r.status_code == 200) {
-            std::cout << "✅ Response from " << service << ":\n" << r.text << "\n";
-        } else {
-            std::cerr << "❌ " << service << " failed (HTTP " << r.status_code << ")\n";
-            std::cerr << "  Response: " << r.text << "\n";
-        }
+    if (r.status_code == 200) {
+        std::cout << "✅ Response from " << target_service << ":\n" << r.text << "\n";
+    } else {
+        std::cerr << "❌ " << target_service << " failed (HTTP " << r.status_code << ")\n";
+        std::cerr << "  Response: " << r.text << "\n";
     }
 
     return 0;
